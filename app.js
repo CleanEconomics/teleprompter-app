@@ -19,6 +19,7 @@ const state = {
   silenceFrames: 0,        // how many frames of silence
   speechFrames: 0,         // how many frames of speech
   userTouching: false,
+  scrollAccum: 0,           // sub-pixel scroll accumulator
 };
 
 // ─── DOM ───
@@ -201,8 +202,12 @@ function vadTick() {
 
   // Scroll if speaking and user isn't manually scrolling
   if (state.isSpeaking && !state.userTouching) {
-    const px = state.baseRate * state.scrollSpeed;
-    els.prompterContainer.scrollTop += px;
+    state.scrollAccum += state.baseRate * state.scrollSpeed;
+    if (state.scrollAccum >= 1) {
+      const whole = Math.floor(state.scrollAccum);
+      els.prompterContainer.scrollTop += whole;
+      state.scrollAccum -= whole;
+    }
   }
 
   state.vadRAF = requestAnimationFrame(vadTick);
@@ -210,6 +215,7 @@ function vadTick() {
 
 function setSpeaking(speaking) {
   state.isSpeaking = speaking;
+  if (!speaking) state.scrollAccum = 0;
   els.vadDot.classList.toggle('speaking', speaking);
   els.vadLabel.classList.toggle('speaking', speaking);
   els.vadLabel.textContent = speaking ? 'Scrolling' : 'Paused';
@@ -382,6 +388,7 @@ els.speedUpBtn.addEventListener('click', () => adjustSpeed(0.2));
 els.speedDownBtn.addEventListener('click', () => adjustSpeed(-0.2));
 
 els.resetScrollBtn.addEventListener('click', () => {
+  state.scrollAccum = 0;
   els.prompterContainer.scrollTo({ top: 0, behavior: 'smooth' });
 });
 
