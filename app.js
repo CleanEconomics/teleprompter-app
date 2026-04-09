@@ -67,15 +67,54 @@ async function startCamera() {
   try {
     if (state.stream) state.stream.getTracks().forEach((t) => t.stop());
 
-    state.stream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: state.facingMode,
-        width: { ideal: 1920 },
-        height: { ideal: 1080 },
-        frameRate: { ideal: 30 },
-      },
-      audio: true,
-    });
+    // Try 4K first, then 1080p, then whatever the device gives us
+    const resolutions = [
+      { width: { ideal: 3840 }, height: { ideal: 2160 } },
+      { width: { ideal: 1920 }, height: { ideal: 1080 } },
+      { width: { ideal: 1280 }, height: { ideal: 720 } },
+    ];
+
+    let stream = null;
+    for (const res of resolutions) {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: state.facingMode,
+            ...res,
+            frameRate: { ideal: 30 },
+          },
+          audio: true,
+        });
+        break;
+      } catch (e) {
+        continue;
+      }
+    }
+
+    if (!stream) {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: state.facingMode },
+        audio: true,
+      });
+    }
+
+    state.stream = stream;
+
+    // Apply highest possible resolution to the track after acquisition
+    const videoTrack = stream.getVideoTracks()[0];
+    if (videoTrack) {
+      const caps = videoTrack.getCapabilities?.();
+      if (caps?.width?.max && caps?.height?.max) {
+        try {
+          await videoTrack.applyConstraints({
+            width: { ideal: caps.width.max },
+            height: { ideal: caps.height.max },
+            frameRate: { ideal: 30 },
+          });
+        } catch (e) {}
+      }
+    }
+
     els.cameraPreview.srcObject = state.stream;
     els.cameraPreview.classList.toggle('mirrored', state.mirrored && state.facingMode === 'user');
   } catch (err) {
