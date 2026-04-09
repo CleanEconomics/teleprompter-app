@@ -234,8 +234,10 @@ function startRecording() {
   state.recordedChunks = [];
 
   const mimeType = getSupportedMimeType();
+  const recOpts = { videoBitsPerSecond: 8_000_000 };
+  if (mimeType) recOpts.mimeType = mimeType;
   try {
-    state.mediaRecorder = new MediaRecorder(state.stream, mimeType ? { mimeType } : {});
+    state.mediaRecorder = new MediaRecorder(state.stream, recOpts);
   } catch (e) {
     state.mediaRecorder = new MediaRecorder(state.stream);
   }
