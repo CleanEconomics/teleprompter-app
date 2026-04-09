@@ -9,10 +9,17 @@ const state = {
   scriptWords: [],
   currentWordIndex: 0,
   fontSize: 28,
-  scrollSpeed: 30,
-  manualScrollInterval: null,
+  // Scroll
+  scrollSpeed: 1.0,       // multiplier: 0 = paused, 0.5 = slow, 1.0 = normal, 2.0 = fast
+  basePixelsPerFrame: 1.2, // base scroll rate at 1.0x
+  isAutoScrolling: false,
+  scrollRAF: null,
+  lastScrollTime: 0,
+  userTouching: false,     // pause auto-scroll while user is touching
+  // Timer
   timerInterval: null,
   recordStartTime: 0,
+  // Camera
   facingMode: 'user',
   mirrored: true,
 };
@@ -35,7 +42,13 @@ const els = {
   prompterContainer: $('prompter-container'),
   recordBtn: $('record-btn'),
   backBtn: $('back-btn'),
+  speedUpBtn: $('speed-up-btn'),
+  speedDownBtn: $('speed-down-btn'),
   scrollToggleBtn: $('scroll-toggle-btn'),
+  scrollIconPlay: $('scroll-icon-play'),
+  scrollIconPause: $('scroll-icon-pause'),
+  speedDisplay: $('speed-display'),
+  speedValue: $('speed-value'),
   recordTimer: $('record-timer'),
   timerDisplay: $('timer-display'),
   voiceIndicator: $('voice-indicator'),
@@ -95,12 +108,16 @@ function stopCamera() {
 // ─── Teleprompter ───
 
 function buildPrompter(text) {
-  // Split into words, preserving line breaks
   const lines = text.split('\n');
   let wordIndex = 0;
   state.scriptWords = [];
 
   els.prompterText.innerHTML = '';
+
+  // Add top padding so text starts below focus line
+  const spacer = document.createElement('div');
+  spacer.style.height = '20px';
+  els.prompterText.appendChild(spacer);
 
   lines.forEach((line, lineIdx) => {
     if (lineIdx > 0) {
@@ -125,9 +142,17 @@ function buildPrompter(text) {
     });
   });
 
+  // Add bottom padding so last words can scroll to top
+  const bottomSpacer = document.createElement('div');
+  bottomSpacer.style.height = '70vh';
+  els.prompterText.appendChild(bottomSpacer);
+
   state.currentWordIndex = 0;
   updateWordHighlights();
   els.prompterText.style.fontSize = state.fontSize + 'px';
+
+  // Reset scroll position
+  els.prompterContainer.scrollTop = 0;
 }
 
 function normalizeWord(word) {
@@ -138,7 +163,7 @@ function normalizeWord(word) {
 }
 
 function updateWordHighlights() {
-  const windowSize = 8; // how many upcoming words to highlight bright
+  const windowSize = 12;
 
   state.scriptWords.forEach((w, i) => {
     if (i < state.currentWordIndex) {
@@ -160,16 +185,86 @@ function scrollToCurrentWord() {
   const containerRect = els.prompterContainer.getBoundingClientRect();
   const wordRect = wordEl.getBoundingClientRect();
 
-  // Target: keep current word near the top focus line (60px from top of container)
   const targetOffset = 60;
   const currentOffset = wordRect.top - containerRect.top;
   const scrollDelta = currentOffset - targetOffset;
 
-  if (Math.abs(scrollDelta) > 5) {
+  if (Math.abs(scrollDelta) > 10) {
     els.prompterContainer.scrollBy({
       top: scrollDelta,
       behavior: 'smooth',
     });
+  }
+}
+
+// ─── Auto Scroll (rAF-based) ───
+
+function startAutoScroll() {
+  if (state.isAutoScrolling) return;
+  state.isAutoScrolling = true;
+  state.lastScrollTime = performance.now();
+  state.scrollRAF = requestAnimationFrame(autoScrollTick);
+  updateScrollUI();
+}
+
+function stopAutoScroll() {
+  state.isAutoScrolling = false;
+  if (state.scrollRAF) {
+    cancelAnimationFrame(state.scrollRAF);
+    state.scrollRAF = null;
+  }
+  updateScrollUI();
+}
+
+function autoScrollTick(now) {
+  if (!state.isAutoScrolling) return;
+
+  const delta = now - state.lastScrollTime;
+  state.lastScrollTime = now;
+
+  // Don't scroll while user is manually touching the prompter
+  if (!state.userTouching && state.scrollSpeed > 0) {
+    // pixels per millisecond, scaled by speed multiplier
+    const px = state.basePixelsPerFrame * state.scrollSpeed * (delta / 16.67);
+    els.prompterContainer.scrollTop += px;
+  }
+
+  state.scrollRAF = requestAnimationFrame(autoScrollTick);
+}
+
+function toggleAutoScroll() {
+  if (state.isAutoScrolling) {
+    stopAutoScroll();
+  } else {
+    startAutoScroll();
+  }
+}
+
+function adjustSpeed(delta) {
+  state.scrollSpeed = Math.round(Math.max(0, Math.min(5, state.scrollSpeed + delta)) * 10) / 10;
+  updateSpeedDisplay();
+
+  // Show speed display briefly
+  els.speedDisplay.classList.remove('hidden');
+  clearTimeout(state.speedHideTimeout);
+  state.speedHideTimeout = setTimeout(() => {
+    els.speedDisplay.classList.add('hidden');
+  }, 1500);
+}
+
+function updateSpeedDisplay() {
+  els.speedValue.textContent = state.scrollSpeed.toFixed(1) + 'x';
+}
+
+function updateScrollUI() {
+  if (state.isAutoScrolling) {
+    els.scrollToggleBtn.classList.add('active');
+    els.scrollIconPlay.classList.add('hidden');
+    els.scrollIconPause.classList.remove('hidden');
+  } else {
+    els.scrollToggleBtn.classList.remove('active');
+    els.scrollIconPlay.classList.remove('hidden');
+    els.scrollIconPause.classList.add('hidden');
   }
 }
 
@@ -178,7 +273,7 @@ function scrollToCurrentWord() {
 function initSpeechRecognition() {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SpeechRecognition) {
-    console.warn('Speech recognition not supported. Using manual scroll only.');
+    console.warn('Speech recognition not supported.');
     return;
   }
 
@@ -189,11 +284,8 @@ function initSpeechRecognition() {
   state.recognition.maxAlternatives = 3;
 
   state.recognition.onresult = (event) => {
-    // Get the latest result
     for (let i = event.resultIndex; i < event.results.length; i++) {
       const result = event.results[i];
-
-      // Process all alternatives for better matching
       for (let alt = 0; alt < result.length; alt++) {
         const transcript = result[alt].transcript.trim();
         if (transcript) {
@@ -204,21 +296,15 @@ function initSpeechRecognition() {
   };
 
   state.recognition.onend = () => {
-    // Auto-restart if we're still supposed to be listening
     if (state.isListening) {
       try {
         state.recognition.start();
-      } catch (e) {
-        // Already started, ignore
-      }
+      } catch (e) {}
     }
   };
 
   state.recognition.onerror = (event) => {
-    if (event.error === 'no-speech' || event.error === 'aborted') {
-      // These are normal, just restart
-      return;
-    }
+    if (event.error === 'no-speech' || event.error === 'aborted') return;
     console.error('Speech recognition error:', event.error);
   };
 }
@@ -230,9 +316,7 @@ function startListening() {
   try {
     state.recognition.start();
     els.voiceIndicator.classList.remove('hidden');
-  } catch (e) {
-    // Already started
-  }
+  } catch (e) {}
 }
 
 function stopListening() {
@@ -253,19 +337,16 @@ function matchSpokenWords(transcript) {
 
   if (spokenWords.length === 0) return;
 
-  // Look ahead window from current position
   const lookAhead = Math.min(30, state.scriptWords.length - state.currentWordIndex);
   let bestMatchEnd = state.currentWordIndex;
 
-  // Try to find the furthest matching position
   for (let spoken of spokenWords) {
-    if (spoken.length < 2) continue; // skip tiny words for reliability
+    if (spoken.length < 2) continue;
 
     for (let j = state.currentWordIndex; j < state.currentWordIndex + lookAhead && j < state.scriptWords.length; j++) {
       const scriptWord = state.scriptWords[j].normalized;
 
-      // Exact match or close enough
-      if (scriptWord === spoken || (scriptWord.length > 3 && spoken.length > 3 && levenshteinClose(scriptWord, spoken))) {
+      if (scriptWord === spoken || (scriptWord.length > 3 && spoken.length > 3 && fuzzyMatch(scriptWord, spoken))) {
         if (j >= bestMatchEnd) {
           bestMatchEnd = j + 1;
         }
@@ -276,18 +357,15 @@ function matchSpokenWords(transcript) {
   if (bestMatchEnd > state.currentWordIndex) {
     state.currentWordIndex = bestMatchEnd;
     updateWordHighlights();
+    // Voice match nudges scroll to the current word position
     scrollToCurrentWord();
   }
 }
 
-function levenshteinClose(a, b) {
-  // Quick check: if words are close enough (edit distance <= 2)
+function fuzzyMatch(a, b) {
   if (Math.abs(a.length - b.length) > 2) return false;
-
-  // Check if one starts with the other (handles partial recognition)
   if (a.startsWith(b) || b.startsWith(a)) return true;
 
-  // Simple character overlap check
   let matches = 0;
   const shorter = a.length < b.length ? a : b;
   const longer = a.length < b.length ? b : a;
@@ -304,14 +382,12 @@ function levenshteinClose(a, b) {
 function startRecording() {
   state.recordedChunks = [];
 
-  // Use the stream that includes both video and audio
   const mimeType = getSupportedMimeType();
   const options = mimeType ? { mimeType } : {};
 
   try {
     state.mediaRecorder = new MediaRecorder(state.stream, options);
   } catch (e) {
-    // Fallback without specifying mime type
     state.mediaRecorder = new MediaRecorder(state.stream);
   }
 
@@ -329,19 +405,22 @@ function startRecording() {
     showScreen(els.previewScreen);
     stopCamera();
     stopListening();
-    stopManualScroll();
+    stopAutoScroll();
     stopTimer();
+    releaseWakeLock();
   };
 
-  state.mediaRecorder.start(1000); // collect data every second
+  state.mediaRecorder.start(1000);
   state.isRecording = true;
 
   els.recordBtn.classList.add('recording');
   els.recordTimer.classList.remove('hidden');
   startTimer();
 
-  // Start voice tracking
+  // Start auto-scroll and voice tracking
+  startAutoScroll();
   startListening();
+  requestWakeLock();
 }
 
 function stopRecording() {
@@ -390,36 +469,6 @@ function updateTimer() {
   els.timerDisplay.textContent = `${mins}:${secs}`;
 }
 
-// ─── Manual Scroll ───
-
-function startManualScroll() {
-  if (state.manualScrollInterval) return;
-  if (state.scrollSpeed === 0) return;
-
-  state.manualScrollInterval = setInterval(() => {
-    els.prompterContainer.scrollBy({
-      top: state.scrollSpeed / 15,
-      behavior: 'auto',
-    });
-  }, 50);
-
-  els.scrollToggleBtn.classList.add('active');
-}
-
-function stopManualScroll() {
-  clearInterval(state.manualScrollInterval);
-  state.manualScrollInterval = null;
-  els.scrollToggleBtn.classList.remove('active');
-}
-
-function toggleManualScroll() {
-  if (state.manualScrollInterval) {
-    stopManualScroll();
-  } else {
-    startManualScroll();
-  }
-}
-
 // ─── Save / Share ───
 
 function saveVideo() {
@@ -453,13 +502,30 @@ async function shareVideo() {
       });
     } catch (err) {
       if (err.name !== 'AbortError') {
-        // Fallback to download
         saveVideo();
       }
     }
   } else {
-    // Fallback to download
     saveVideo();
+  }
+}
+
+// ─── Wake Lock ───
+
+let wakeLock = null;
+
+async function requestWakeLock() {
+  try {
+    if ('wakeLock' in navigator) {
+      wakeLock = await navigator.wakeLock.request('screen');
+    }
+  } catch (e) {}
+}
+
+function releaseWakeLock() {
+  if (wakeLock) {
+    wakeLock.release();
+    wakeLock = null;
   }
 }
 
@@ -473,7 +539,7 @@ els.startBtn.addEventListener('click', async () => {
   }
 
   state.fontSize = parseInt(els.fontSizeSlider.value);
-  state.scrollSpeed = parseInt(els.scrollSpeedSlider.value);
+  state.scrollSpeed = parseInt(els.scrollSpeedSlider.value) / 30; // convert 0-100 slider to ~0-3.3x
   state.facingMode = els.cameraSelect.value;
   state.mirrored = els.mirrorToggle.checked;
 
@@ -497,12 +563,15 @@ els.backBtn.addEventListener('click', () => {
   }
   stopCamera();
   stopListening();
-  stopManualScroll();
+  stopAutoScroll();
   stopTimer();
+  releaseWakeLock();
   showScreen(els.editorScreen);
 });
 
-els.scrollToggleBtn.addEventListener('click', toggleManualScroll);
+els.scrollToggleBtn.addEventListener('click', toggleAutoScroll);
+els.speedUpBtn.addEventListener('click', () => adjustSpeed(0.2));
+els.speedDownBtn.addEventListener('click', () => adjustSpeed(-0.2));
 
 els.saveBtn.addEventListener('click', saveVideo);
 els.shareBtn.addEventListener('click', shareVideo);
@@ -513,33 +582,28 @@ els.retakeBtn.addEventListener('click', () => {
   showScreen(els.editorScreen);
 });
 
-// Font size live update
 els.fontSizeSlider.addEventListener('input', (e) => {
   state.fontSize = parseInt(e.target.value);
 });
 
 els.scrollSpeedSlider.addEventListener('input', (e) => {
-  state.scrollSpeed = parseInt(e.target.value);
-  // If manual scroll is active, restart with new speed
-  if (state.manualScrollInterval) {
-    stopManualScroll();
-    startManualScroll();
-  }
+  state.scrollSpeed = parseInt(e.target.value) / 30;
 });
 
-// Allow manual touch scrolling on the prompter
-let touchStartY = 0;
-els.prompterContainer.addEventListener('touchstart', (e) => {
-  touchStartY = e.touches[0].clientY;
+// Touch handling: pause auto-scroll while user is manually scrolling the prompter
+els.prompterContainer.addEventListener('touchstart', () => {
+  state.userTouching = true;
 }, { passive: true });
 
-els.prompterContainer.addEventListener('touchmove', (e) => {
-  const deltaY = touchStartY - e.touches[0].clientY;
-  els.prompterContainer.scrollTop += deltaY;
-  touchStartY = e.touches[0].clientY;
+els.prompterContainer.addEventListener('touchend', () => {
+  state.userTouching = false;
 }, { passive: true });
 
-// Prevent zoom on double-tap
+els.prompterContainer.addEventListener('touchcancel', () => {
+  state.userTouching = false;
+}, { passive: true });
+
+// Prevent zoom on double-tap (outside prompter)
 document.addEventListener('touchend', (e) => {
   if (e.target.closest('#prompter-container')) return;
   const now = Date.now();
@@ -548,36 +612,6 @@ document.addEventListener('touchend', (e) => {
   }
   document.lastTouchEnd = now;
 }, { passive: false });
-
-// Keep screen awake during recording
-let wakeLock = null;
-async function requestWakeLock() {
-  try {
-    if ('wakeLock' in navigator) {
-      wakeLock = await navigator.wakeLock.request('screen');
-    }
-  } catch (e) {}
-}
-
-function releaseWakeLock() {
-  if (wakeLock) {
-    wakeLock.release();
-    wakeLock = null;
-  }
-}
-
-// Override start/stop recording to include wake lock
-const originalStartRecording = startRecording;
-const originalStopRecording = stopRecording;
-
-// Hijack the record button to also manage wake lock
-els.recordBtn.addEventListener('click', () => {
-  if (state.isRecording) {
-    releaseWakeLock();
-  } else {
-    requestWakeLock();
-  }
-}, { capture: true });
 
 // Service Worker registration
 if ('serviceWorker' in navigator) {

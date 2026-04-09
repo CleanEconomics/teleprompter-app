@@ -202,12 +202,14 @@ html, body {
 
 #prompter-container {
   flex: 1;
-  overflow: hidden;
+  overflow-y: scroll;
+  overflow-x: hidden;
   position: relative;
   background: var(--prompter-bg);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   pointer-events: auto;
+  scroll-behavior: auto;
 }
 
 #prompter-text {
@@ -273,8 +275,9 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 40px;
+  gap: 20px;
   z-index: 20;
+  padding: 0 16px;
 }
 
 .control-btn {
@@ -390,6 +393,26 @@ html, body {
   animation: pulse 1.5s ease-in-out infinite;
 }
 
+/* Speed display */
+
+#speed-display {
+  position: absolute;
+  bottom: calc(var(--safe-bottom) + 100px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  padding: 4px 14px;
+  border-radius: 16px;
+  z-index: 20;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--highlight);
+  font-variant-numeric: tabular-nums;
+  transition: opacity 0.3s;
+}
+
 .hidden {
   display: none !important;
 }
@@ -442,8 +465,9 @@ html, body {
   scrollbar-width: none;
 }
 
-/* Touch scroll hint */
+/* Touch scroll */
 #prompter-container {
   touch-action: pan-y;
   -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
 }
