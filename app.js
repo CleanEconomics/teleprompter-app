@@ -4,19 +4,11 @@ const state = {
   mediaRecorder: null,
   recordedChunks: [],
   isRecording: false,
-  recognition: null,
-  isListening: false,
-  scriptWords: [],
-  currentWordIndex: 0,
   fontSize: 28,
   timerInterval: null,
   recordStartTime: 0,
   facingMode: 'user',
   mirrored: true,
-  // Smooth scroll animation
-  scrollTarget: 0,
-  scrollCurrent: 0,
-  scrollRAF: null,
 };
 
 // ─── DOM ───
@@ -39,7 +31,6 @@ const els = {
   resetScrollBtn: $('reset-scroll-btn'),
   recordTimer: $('record-timer'),
   timerDisplay: $('timer-display'),
-  voiceIndicator: $('voice-indicator'),
   previewVideo: $('preview-video'),
   saveBtn: $('save-btn'),
   shareBtn: $('share-btn'),
@@ -71,7 +62,6 @@ async function startCamera() {
       audio: true,
     });
     els.cameraPreview.srcObject = state.stream;
-
     els.cameraPreview.classList.toggle('mirrored', state.mirrored && state.facingMode === 'user');
   } catch (err) {
     alert('Camera access denied. Please allow camera and microphone permissions.');
@@ -86,259 +76,36 @@ function stopCamera() {
   els.cameraPreview.srcObject = null;
 }
 
-// ─── Teleprompter Build ───
+// ─── Teleprompter ───
 
 function buildPrompter(text) {
-  const lines = text.split('\n');
-  let wordIndex = 0;
-  state.scriptWords = [];
   els.prompterText.innerHTML = '';
 
-  // Top spacer so first words sit at the focus line
-  const topSpacer = document.createElement('div');
-  topSpacer.style.height = '40px';
-  els.prompterText.appendChild(topSpacer);
+  // Top spacer
+  const top = document.createElement('div');
+  top.style.height = '60px';
+  els.prompterText.appendChild(top);
 
-  lines.forEach((line, lineIdx) => {
-    if (lineIdx > 0) {
+  // Render the script as simple text paragraphs
+  const paragraphs = text.split('\n');
+  paragraphs.forEach((para) => {
+    if (para.trim() === '') {
       els.prompterText.appendChild(document.createElement('br'));
-      els.prompterText.appendChild(document.createElement('br'));
+      return;
     }
-
-    const words = line.split(/\s+/).filter((w) => w.length > 0);
-    words.forEach((word) => {
-      const span = document.createElement('span');
-      span.className = 'word upcoming';
-      span.textContent = word + ' ';
-      span.dataset.index = wordIndex;
-      els.prompterText.appendChild(span);
-
-      state.scriptWords.push({
-        original: word,
-        normalized: normalizeWord(word),
-        element: span,
-      });
-      wordIndex++;
-    });
+    const p = document.createElement('p');
+    p.className = 'prompter-line';
+    p.textContent = para;
+    els.prompterText.appendChild(p);
   });
 
-  // Bottom spacer so last words can scroll up to the focus line
-  const bottomSpacer = document.createElement('div');
-  bottomSpacer.style.height = '80vh';
-  els.prompterText.appendChild(bottomSpacer);
+  // Bottom spacer so you can scroll the last line to the top
+  const bottom = document.createElement('div');
+  bottom.style.height = '80vh';
+  els.prompterText.appendChild(bottom);
 
-  state.currentWordIndex = 0;
-  updateWordHighlights();
   els.prompterText.style.fontSize = state.fontSize + 'px';
   els.prompterContainer.scrollTop = 0;
-  state.scrollTarget = 0;
-  state.scrollCurrent = 0;
-}
-
-function normalizeWord(word) {
-  return word
-    .toLowerCase()
-    .replace(/[^a-z0-9']/g, '')
-    .replace(/^'+|'+$/g, '');
-}
-
-// ─── Word Highlighting ───
-
-function updateWordHighlights() {
-  const ahead = 15;
-  state.scriptWords.forEach((w, i) => {
-    if (i < state.currentWordIndex) {
-      w.element.className = 'word spoken';
-    } else if (i === state.currentWordIndex) {
-      w.element.className = 'word current';
-    } else if (i <= state.currentWordIndex + ahead) {
-      w.element.className = 'word upcoming';
-    } else {
-      w.element.className = 'word';
-    }
-  });
-}
-
-// ─── Smooth Scroll to Word ───
-// Uses rAF to lerp scrollTop toward the target, so it glides instead of jumping.
-
-function scrollToWord(index) {
-  if (index >= state.scriptWords.length) return;
-
-  const wordEl = state.scriptWords[index].element;
-  // Calculate where we need scrollTop to be so the word sits at the focus line (60px from top)
-  const containerTop = els.prompterContainer.getBoundingClientRect().top;
-  const wordTop = wordEl.getBoundingClientRect().top;
-  const offset = wordTop - containerTop;
-  const targetScroll = els.prompterContainer.scrollTop + offset - 60;
-
-  state.scrollTarget = Math.max(0, targetScroll);
-
-  // Start the smooth scroll animation if not already running
-  if (!state.scrollRAF) {
-    state.scrollCurrent = els.prompterContainer.scrollTop;
-    animateScroll();
-  }
-}
-
-function animateScroll() {
-  const diff = state.scrollTarget - state.scrollCurrent;
-
-  if (Math.abs(diff) < 1) {
-    els.prompterContainer.scrollTop = state.scrollTarget;
-    state.scrollCurrent = state.scrollTarget;
-    state.scrollRAF = null;
-    return;
-  }
-
-  // Lerp: ease toward target (0.12 = smooth, not instant)
-  state.scrollCurrent += diff * 0.12;
-  els.prompterContainer.scrollTop = state.scrollCurrent;
-
-  state.scrollRAF = requestAnimationFrame(animateScroll);
-}
-
-// ─── Speech Recognition ───
-
-function initSpeechRecognition() {
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SpeechRecognition) {
-    console.warn('Speech recognition not supported on this browser.');
-    return;
-  }
-
-  state.recognition = new SpeechRecognition();
-  state.recognition.continuous = true;
-  state.recognition.interimResults = true;
-  state.recognition.lang = 'en-US';
-  state.recognition.maxAlternatives = 3;
-
-  state.recognition.onresult = (event) => {
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      const result = event.results[i];
-      for (let alt = 0; alt < result.length; alt++) {
-        const transcript = result[alt].transcript.trim();
-        if (transcript) {
-          matchSpokenWords(transcript, result.isFinal);
-        }
-      }
-    }
-  };
-
-  state.recognition.onend = () => {
-    // Auto-restart -- recognition times out after silence
-    if (state.isListening) {
-      setTimeout(() => {
-        if (state.isListening) {
-          try { state.recognition.start(); } catch (e) {}
-        }
-      }, 100);
-    }
-  };
-
-  state.recognition.onerror = (event) => {
-    if (event.error === 'no-speech' || event.error === 'aborted') return;
-    console.error('Speech error:', event.error);
-  };
-}
-
-function startListening() {
-  if (!state.recognition) return;
-  state.isListening = true;
-  try {
-    state.recognition.start();
-    els.voiceIndicator.classList.remove('hidden');
-  } catch (e) {}
-}
-
-function stopListening() {
-  state.isListening = false;
-  if (state.recognition) {
-    try { state.recognition.stop(); } catch (e) {}
-  }
-  els.voiceIndicator.classList.add('hidden');
-}
-
-// ─── Word Matching ───
-// Scans spoken transcript against the script from current position forward.
-// Uses a sliding window to find the best consecutive match.
-
-function matchSpokenWords(transcript, isFinal) {
-  const spokenWords = transcript
-    .split(/\s+/)
-    .map(normalizeWord)
-    .filter((w) => w.length > 0);
-
-  if (spokenWords.length === 0) return;
-
-  const maxLookAhead = 40;
-  const searchEnd = Math.min(state.currentWordIndex + maxLookAhead, state.scriptWords.length);
-  let bestMatchPos = state.currentWordIndex;
-
-  // Try to find the furthest consecutive run of matches
-  // Start from each spoken word and see how far into the script it matches
-  for (let s = 0; s < spokenWords.length; s++) {
-    const spoken = spokenWords[s];
-    if (spoken.length < 2) continue;
-
-    for (let j = state.currentWordIndex; j < searchEnd; j++) {
-      const scriptWord = state.scriptWords[j].normalized;
-
-      if (wordsMatch(spoken, scriptWord)) {
-        // Found a match at position j. Now check if subsequent spoken words also match.
-        let matchEnd = j + 1;
-        for (let k = 1; s + k < spokenWords.length && j + k < state.scriptWords.length; k++) {
-          const nextSpoken = spokenWords[s + k];
-          const nextScript = state.scriptWords[j + k].normalized;
-          if (nextSpoken.length >= 2 && wordsMatch(nextSpoken, nextScript)) {
-            matchEnd = j + k + 1;
-          } else {
-            break;
-          }
-        }
-
-        if (matchEnd > bestMatchPos) {
-          bestMatchPos = matchEnd;
-        }
-        break; // Found first match for this spoken word, move to next
-      }
-    }
-  }
-
-  if (bestMatchPos > state.currentWordIndex) {
-    state.currentWordIndex = bestMatchPos;
-    updateWordHighlights();
-    scrollToWord(state.currentWordIndex);
-  }
-}
-
-function wordsMatch(a, b) {
-  if (a === b) return true;
-  if (a.length < 3 || b.length < 3) return a === b; // short words must be exact
-  if (Math.abs(a.length - b.length) > 2) return false;
-
-  // Prefix match (speech recognition often gives partial words)
-  if (a.length >= 4 && b.length >= 4) {
-    if (a.startsWith(b.substring(0, 4)) || b.startsWith(a.substring(0, 4))) return true;
-  }
-
-  // Character overlap ratio
-  let hits = 0;
-  const shorter = a.length <= b.length ? a : b;
-  const longer = a.length <= b.length ? b : a;
-  const used = new Array(longer.length).fill(false);
-
-  for (let i = 0; i < shorter.length; i++) {
-    for (let j = 0; j < longer.length; j++) {
-      if (!used[j] && shorter[i] === longer[j]) {
-        hits++;
-        used[j] = true;
-        break;
-      }
-    }
-  }
-
-  return hits / longer.length >= 0.75;
 }
 
 // ─── Recording ───
@@ -365,11 +132,8 @@ function startRecording() {
     els.previewVideo.src = URL.createObjectURL(blob);
     showScreen(els.previewScreen);
     stopCamera();
-    stopListening();
     stopTimer();
     releaseWakeLock();
-    cancelAnimationFrame(state.scrollRAF);
-    state.scrollRAF = null;
   };
 
   state.mediaRecorder.start(1000);
@@ -377,7 +141,6 @@ function startRecording() {
   els.recordBtn.classList.add('recording');
   els.recordTimer.classList.remove('hidden');
   startTimer();
-  startListening();
   requestWakeLock();
 }
 
@@ -483,7 +246,6 @@ els.startBtn.addEventListener('click', async () => {
   buildPrompter(script);
   showScreen(els.recordingScreen);
   await startCamera();
-  initSpeechRecognition();
 });
 
 els.recordBtn.addEventListener('click', () => {
@@ -493,20 +255,13 @@ els.recordBtn.addEventListener('click', () => {
 els.backBtn.addEventListener('click', () => {
   if (state.isRecording) stopRecording();
   stopCamera();
-  stopListening();
   stopTimer();
   releaseWakeLock();
-  cancelAnimationFrame(state.scrollRAF);
-  state.scrollRAF = null;
   showScreen(els.editorScreen);
 });
 
 els.resetScrollBtn.addEventListener('click', () => {
-  state.currentWordIndex = 0;
-  updateWordHighlights();
-  els.prompterContainer.scrollTop = 0;
-  state.scrollTarget = 0;
-  state.scrollCurrent = 0;
+  els.prompterContainer.scrollTo({ top: 0, behavior: 'smooth' });
 });
 
 els.saveBtn.addEventListener('click', saveVideo);
