@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#000000">
+  <title>TelePrompter Cam</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%23111' width='100' height='100' rx='20'/><text y='65' x='50' text-anchor='middle' font-size='50'>🎬</text></svg>">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- SCRIPT EDITOR SCREEN -->
+  <div id="editor-screen" class="screen active">
+    <div class="editor-header">
+      <h1>TelePrompter Cam</h1>
+      <p class="subtitle">Paste your script, hit record, and read naturally.</p>
+    </div>
+    <div class="editor-body">
+      <textarea id="script-input" placeholder="Paste or type your script here...">Welcome to TelePrompter Cam. This is a sample script to show you how the teleprompter works.
+
+As you speak, the app listens to your voice and automatically scrolls the text to keep up with you. Just read naturally and the words will highlight as you go.
+
+You can replace this text with your own script. Try to speak clearly and at a comfortable pace. The voice recognition works best in a quiet environment.
+
+That's it! Hit record and start reading. The video saves directly to your device when you're done.</textarea>
+      <div class="editor-settings">
+        <label>
+          <span>Text Size</span>
+          <input type="range" id="font-size-slider" min="18" max="48" value="28">
+        </label>
+        <label>
+          <span>Scroll Speed (manual)</span>
+          <input type="range" id="scroll-speed-slider" min="0" max="100" value="30">
+        </label>
+        <label>
+          <span>Camera</span>
+          <select id="camera-select">
+            <option value="user">Front</option>
+            <option value="environment">Rear</option>
+          </select>
+        </label>
+        <label class="mirror-label">
+          <span>Mirror Preview</span>
+          <input type="checkbox" id="mirror-toggle" checked>
+        </label>
+      </div>
+    </div>
+    <button id="start-btn" class="primary-btn">Start Teleprompter</button>
+  </div>
+
+  <!-- RECORDING SCREEN -->
+  <div id="recording-screen" class="screen">
+    <video id="camera-preview" autoplay playsinline muted></video>
+
+    <div id="prompter-overlay">
+      <div id="prompter-gradient-top"></div>
+      <div id="prompter-container">
+        <div id="prompter-text"></div>
+      </div>
+      <div id="prompter-gradient-bottom"></div>
+      <div id="focus-line"></div>
+    </div>
+
+    <div id="controls">
+      <button id="back-btn" class="control-btn" title="Back">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+      </button>
+      <button id="record-btn" class="record-btn" title="Record">
+        <div class="record-dot"></div>
+      </button>
+      <button id="scroll-toggle-btn" class="control-btn" title="Toggle auto-scroll">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
+      </button>
+    </div>
+
+    <div id="record-timer" class="hidden">
+      <div class="rec-indicator"></div>
+      <span id="timer-display">00:00</span>
+    </div>
+
+    <div id="voice-indicator" class="hidden">
+      <div class="voice-dot"></div>
+      <span>Listening</span>
+    </div>
+  </div>
+
+  <!-- PREVIEW SCREEN -->
+  <div id="preview-screen" class="screen">
+    <div class="preview-header">
+      <h2>Recording Complete</h2>
+    </div>
+    <video id="preview-video" controls playsinline></video>
+    <div class="preview-actions">
+      <button id="save-btn" class="primary-btn">Save to Device</button>
+      <button id="share-btn" class="primary-btn secondary">Share</button>
+      <button id="retake-btn" class="primary-btn ghost">Retake</button>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
