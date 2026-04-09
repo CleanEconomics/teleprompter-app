@@ -9,6 +9,16 @@ const state = {
   recordStartTime: 0,
   facingMode: 'user',
   mirrored: true,
+  // VAD scroll
+  audioCtx: null,
+  analyser: null,
+  vadRAF: null,
+  isSpeaking: false,
+  scrollSpeed: 1.0,       // multiplier
+  baseRate: 1.5,           // px per frame at 1x
+  silenceFrames: 0,        // how many frames of silence
+  speechFrames: 0,         // how many frames of speech
+  userTouching: false,
 };
 
 // ─── DOM ───
@@ -28,7 +38,13 @@ const els = {
   prompterContainer: $('prompter-container'),
   recordBtn: $('record-btn'),
   backBtn: $('back-btn'),
+  speedUpBtn: $('speed-up-btn'),
+  speedDownBtn: $('speed-down-btn'),
   resetScrollBtn: $('reset-scroll-btn'),
+  vadDot: $('vad-dot'),
+  vadLabel: $('vad-label'),
+  speedDisplay: $('speed-display'),
+  statusBar: $('status-bar'),
   recordTimer: $('record-timer'),
   timerDisplay: $('timer-display'),
   previewVideo: $('preview-video'),
@@ -48,9 +64,7 @@ function showScreen(screen) {
 
 async function startCamera() {
   try {
-    if (state.stream) {
-      state.stream.getTracks().forEach((t) => t.stop());
-    }
+    if (state.stream) state.stream.getTracks().forEach((t) => t.stop());
 
     state.stream = await navigator.mediaDevices.getUserMedia({
       video: {
@@ -81,14 +95,11 @@ function stopCamera() {
 function buildPrompter(text) {
   els.prompterText.innerHTML = '';
 
-  // Top spacer
   const top = document.createElement('div');
   top.style.height = '60px';
   els.prompterText.appendChild(top);
 
-  // Render the script as simple text paragraphs
-  const paragraphs = text.split('\n');
-  paragraphs.forEach((para) => {
+  text.split('\n').forEach((para) => {
     if (para.trim() === '') {
       els.prompterText.appendChild(document.createElement('br'));
       return;
@@ -99,13 +110,116 @@ function buildPrompter(text) {
     els.prompterText.appendChild(p);
   });
 
-  // Bottom spacer so you can scroll the last line to the top
   const bottom = document.createElement('div');
   bottom.style.height = '80vh';
   els.prompterText.appendChild(bottom);
 
   els.prompterText.style.fontSize = state.fontSize + 'px';
   els.prompterContainer.scrollTop = 0;
+}
+
+// ─── Voice Activity Detection ───
+// Uses Web Audio AnalyserNode to detect speech energy.
+// Speaking → scroll. Silent → pause.
+
+function initVAD() {
+  if (!state.stream) return;
+
+  const audioTrack = state.stream.getAudioTracks()[0];
+  if (!audioTrack) return;
+
+  state.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const source = state.audioCtx.createMediaStreamSource(state.stream);
+
+  state.analyser = state.audioCtx.createAnalyser();
+  state.analyser.fftSize = 512;
+  state.analyser.smoothingTimeConstant = 0.3;
+  source.connect(state.analyser);
+  // Don't connect to destination — we don't want to play the mic back
+
+  state.silenceFrames = 0;
+  state.speechFrames = 0;
+  state.isSpeaking = false;
+}
+
+function startVAD() {
+  if (!state.analyser) return;
+  state.vadRAF = requestAnimationFrame(vadTick);
+}
+
+function stopVAD() {
+  if (state.vadRAF) {
+    cancelAnimationFrame(state.vadRAF);
+    state.vadRAF = null;
+  }
+  if (state.audioCtx) {
+    state.audioCtx.close().catch(() => {});
+    state.audioCtx = null;
+    state.analyser = null;
+  }
+  setSpeaking(false);
+}
+
+function vadTick() {
+  if (!state.analyser) return;
+
+  const bufLen = state.analyser.frequencyBinCount;
+  const data = new Uint8Array(bufLen);
+  state.analyser.getByteFrequencyData(data);
+
+  // Calculate RMS energy across speech-relevant frequency bins (~300Hz-3000Hz)
+  // At 44100Hz sample rate with fftSize 512, each bin ≈ 86Hz
+  // Bins 3-35 cover roughly 260Hz-3000Hz (human speech range)
+  const startBin = 3;
+  const endBin = Math.min(35, bufLen);
+  let sum = 0;
+  for (let i = startBin; i < endBin; i++) {
+    sum += data[i];
+  }
+  const avg = sum / (endBin - startBin);
+
+  // Threshold: typical speech is 40-80, silence/noise is 0-20
+  // Adjustable based on environment; 25 is a reasonable default
+  const threshold = 25;
+
+  if (avg > threshold) {
+    state.speechFrames++;
+    state.silenceFrames = 0;
+    // Require 3 consecutive frames (~50ms) of speech to trigger
+    if (state.speechFrames >= 3 && !state.isSpeaking) {
+      setSpeaking(true);
+    }
+  } else {
+    state.silenceFrames++;
+    state.speechFrames = 0;
+    // Require 15 frames (~250ms) of silence before pausing
+    // This prevents stopping on brief pauses between words
+    if (state.silenceFrames >= 15 && state.isSpeaking) {
+      setSpeaking(false);
+    }
+  }
+
+  // Scroll if speaking and user isn't manually scrolling
+  if (state.isSpeaking && !state.userTouching) {
+    const px = state.baseRate * state.scrollSpeed;
+    els.prompterContainer.scrollTop += px;
+  }
+
+  state.vadRAF = requestAnimationFrame(vadTick);
+}
+
+function setSpeaking(speaking) {
+  state.isSpeaking = speaking;
+  els.vadDot.classList.toggle('speaking', speaking);
+  els.vadLabel.classList.toggle('speaking', speaking);
+  els.vadLabel.textContent = speaking ? 'Scrolling' : 'Paused';
+}
+
+// ─── Speed Controls ───
+
+function adjustSpeed(delta) {
+  state.scrollSpeed = Math.round(Math.max(0.2, Math.min(4.0, state.scrollSpeed + delta)) * 10) / 10;
+  els.speedDisplay.textContent = state.scrollSpeed.toFixed(1) + 'x';
 }
 
 // ─── Recording ───
@@ -132,6 +246,7 @@ function startRecording() {
     els.previewVideo.src = URL.createObjectURL(blob);
     showScreen(els.previewScreen);
     stopCamera();
+    stopVAD();
     stopTimer();
     releaseWakeLock();
   };
@@ -141,6 +256,8 @@ function startRecording() {
   els.recordBtn.classList.add('recording');
   els.recordTimer.classList.remove('hidden');
   startTimer();
+  initVAD();
+  startVAD();
   requestWakeLock();
 }
 
@@ -255,10 +372,14 @@ els.recordBtn.addEventListener('click', () => {
 els.backBtn.addEventListener('click', () => {
   if (state.isRecording) stopRecording();
   stopCamera();
+  stopVAD();
   stopTimer();
   releaseWakeLock();
   showScreen(els.editorScreen);
 });
+
+els.speedUpBtn.addEventListener('click', () => adjustSpeed(0.2));
+els.speedDownBtn.addEventListener('click', () => adjustSpeed(-0.2));
 
 els.resetScrollBtn.addEventListener('click', () => {
   els.prompterContainer.scrollTo({ top: 0, behavior: 'smooth' });
@@ -275,6 +396,11 @@ els.retakeBtn.addEventListener('click', () => {
 els.fontSizeSlider.addEventListener('input', (e) => {
   state.fontSize = parseInt(e.target.value);
 });
+
+// Pause VAD scroll while user is touching the prompter
+els.prompterContainer.addEventListener('touchstart', () => { state.userTouching = true; }, { passive: true });
+els.prompterContainer.addEventListener('touchend', () => { state.userTouching = false; }, { passive: true });
+els.prompterContainer.addEventListener('touchcancel', () => { state.userTouching = false; }, { passive: true });
 
 // Prevent zoom on double-tap outside prompter
 document.addEventListener('touchend', (e) => {

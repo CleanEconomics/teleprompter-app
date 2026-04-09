@@ -251,7 +251,7 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 36px;
+  gap: 16px;
   z-index: 20;
   padding: 0 16px;
 }
@@ -342,6 +342,59 @@ html, body {
   50% { opacity: 0.3; }
 }
 
+
+/* Status bar (VAD + speed) */
+
+#status-bar {
+  position: absolute;
+  bottom: calc(var(--safe-bottom) + 100px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  padding: 6px 16px;
+  border-radius: 20px;
+  z-index: 20;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+#vad-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+#vad-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  transition: background 0.15s;
+}
+
+#vad-dot.speaking {
+  background: #30d158;
+  box-shadow: 0 0 8px rgba(48, 209, 88, 0.6);
+}
+
+#vad-label {
+  color: var(--text-secondary);
+  transition: color 0.15s;
+}
+
+#vad-label.speaking {
+  color: #30d158;
+}
+
+#speed-display {
+  color: var(--highlight);
+  font-variant-numeric: tabular-nums;
+}
 
 .hidden {
   display: none !important;
